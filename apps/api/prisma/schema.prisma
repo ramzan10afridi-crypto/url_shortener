@@ -1,0 +1,47 @@
+// Prisma schema for the URL shortener.
+// PostgreSQL for both local dev (local Postgres server) and production (AWS RDS).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  urls      Url[]
+}
+
+model Url {
+  id          String   @id @default(cuid())
+  shortCode   String   @unique
+  originalUrl String
+  clicks      Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clickLogs Click[]
+
+  @@index([createdAt])
+  @@index([userId])
+}
+
+model Click {
+  id        String   @id @default(cuid())
+  urlId     String
+  url       Url      @relation(fields: [urlId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  country   String?
+  referrer  String?
+  userAgent String?
+
+  @@index([urlId, createdAt])
+}

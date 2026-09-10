@@ -1,0 +1,37 @@
+{
+  "name": "url-shortener",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.3",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "dev:api": "pnpm --filter @url-shortener/api dev",
+    "dev:web": "pnpm --filter @url-shortener/web dev",
+    "build": "pnpm -r build",
+    "build:api": "pnpm --filter @url-shortener/api build",
+    "build:web": "pnpm --filter @url-shortener/web build",
+    "start:api": "pnpm --filter @url-shortener/api start",
+    "preview:web": "pnpm --filter @url-shortener/web preview",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @url-shortener/api prisma:generate",
+    "db:migrate": "pnpm --filter @url-shortener/api prisma:migrate",
+    "db:studio": "pnpm --filter @url-shortener/api prisma:studio"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "prettier": "^3.3.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@nestjs/core",
+      "@prisma/client",
+      "@prisma/engines",
+      "esbuild",
+      "prisma"
+    ]
+  }
+}
