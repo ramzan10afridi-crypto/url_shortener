@@ -38,6 +38,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # shared resolves to dist/, so it must be compiled before the web build.
+      - run: pnpm --filter @url-shortener/shared build
+
       # The API is same-origin behind CloudFront, so no API base URL is baked in.
       - run: pnpm --filter @url-shortener/web build
 
