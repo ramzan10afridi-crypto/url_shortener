@@ -1,0 +1,87 @@
+name: Deploy API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - 'packages/shared/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/deploy-api.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: url-shortener-api
+  ECS_CLUSTER: url-shortener-cluster
+  ECS_SERVICE: url-shortener-api-service
+  TASK_FAMILY: url-shortener-api-task
+  CONTAINER_NAME: url-shortener-api
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::695746119332:role/github-actions-url-shortener
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGE="$REGISTRY/$ECR_REPOSITORY:${{ github.sha }}"
+          docker build -f apps/api/Dockerfile -t "$IMAGE" -t "$REGISTRY/$ECR_REPOSITORY:latest" .
+          docker push "$IMAGE"
+          docker push "$REGISTRY/$ECR_REPOSITORY:latest"
+          echo "uri=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      # Pulled from AWS rather than committed, so secrets stay out of the repo.
+      # register-task-definition rejects the read-only fields describe returns.
+      - name: Fetch current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_FAMILY" \
+            --query taskDefinition \
+          | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                    .compatibilities, .registeredAt, .registeredBy)' \
+          > task-definition.json
+
+      - id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.image.outputs.uri }}
+
+      - uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://d3t588gbr3lp9p.cloudfront.net/health)
+            [ "$code" = "200" ] && echo "health ok" && exit 0
+            sleep 10
+          done
+          echo "health check failed after deploy"
+          exit 1

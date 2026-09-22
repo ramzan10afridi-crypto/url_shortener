@@ -21,7 +21,7 @@ export class UrlsService {
       originalUrl: url.originalUrl,
       clicks: url.clicks,
       createdAt: url.createdAt.toISOString(),
-      shortUrl: `${base}/${url.shortCode}`,
+      shortUrl: `${base}/r/${url.shortCode}`,
       userId: url.userId,
     };
   }

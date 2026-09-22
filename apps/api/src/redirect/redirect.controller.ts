@@ -3,7 +3,9 @@ import type { Request, Response } from 'express';
 import { ClicksService } from '../clicks/clicks.service';
 import { UrlsService } from '../urls/urls.service';
 
-@Controller()
+// Mounted at /r rather than the root so it cannot shadow sibling routes, and so
+// CloudFront can route redirects to the ALB by path pattern.
+@Controller('r')
 export class RedirectController {
   constructor(
     private readonly urls: UrlsService,

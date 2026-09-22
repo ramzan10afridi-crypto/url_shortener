@@ -1,0 +1,67 @@
+name: Deploy Web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'packages/shared/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/deploy-web.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: url-shortener-web-695746119332
+  CLOUDFRONT_DISTRIBUTION_ID: E2LCSYNUEOV3WI
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The API is same-origin behind CloudFront, so no API base URL is baked in.
+      - run: pnpm --filter @url-shortener/web build
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::695746119332:role/github-actions-url-shortener
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Fingerprinted assets first and cached hard; index.html last and never
+      # cached, so the page can never reference assets that aren't uploaded yet.
+      - name: Upload assets
+        run: |
+          aws s3 sync apps/web/dist "s3://$S3_BUCKET" \
+            --delete \
+            --exclude index.html \
+            --cache-control 'public,max-age=31536000,immutable'
+
+      - name: Upload index.html
+        run: |
+          aws s3 cp apps/web/dist/index.html "s3://$S3_BUCKET/index.html" \
+            --cache-control 'no-cache,no-store,must-revalidate'
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
+            --paths '/index.html' '/'

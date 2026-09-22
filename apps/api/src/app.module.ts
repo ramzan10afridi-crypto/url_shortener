@@ -15,6 +15,8 @@ import { HealthController } from './health/health.controller';
     ClicksModule,
     UrlsModule,
   ],
-  controllers: [RedirectController, HealthController],
+  // HealthController must precede RedirectController: the redirect route is
+  // GET /:shortCode, which otherwise matches /health first.
+  controllers: [HealthController, RedirectController],
 })
 export class AppModule {}

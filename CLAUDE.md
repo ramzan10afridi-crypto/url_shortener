@@ -45,7 +45,7 @@ cp apps/api/.env.example apps/api/.env
 pnpm --filter @url-shortener/api prisma:migrate --name init
 ```
 
-Dev URLs: API `http://localhost:3001`, Web `http://localhost:5173`, redirect `GET http://localhost:3001/{code}`.
+Dev URLs: API `http://localhost:3001`, Web `http://localhost:5173`, redirect `GET http://localhost:3001/r/{code}`.
 
 ## Architecture
 
@@ -53,11 +53,11 @@ pnpm monorepo with three workspaces defined by `pnpm-workspace.yaml` (`apps/*`, 
 
 - **`apps/api`** — NestJS 10 + Prisma. Entry `src/main.ts` bootstraps `AppModule` (`src/app.module.ts`) with helmet, CORS (origins from `CORS_ORIGIN` env, comma-separated), and a global `ValidationPipe({ whitelist: true, transform: true })`. Two route surfaces share the same Nest app:
   - `UrlsModule` (`src/urls/`) mounts under `/api/urls` — create + list.
-  - `RedirectController` (`src/redirect/`) owns the root `GET /:shortCode` route and increments `clicks`. Because it lives at the root, any new top-level route must not collide with a short code shape.
+  - `RedirectController` (`src/redirect/`) serves `GET /r/:shortCode` and increments `clicks`. It was originally mounted at the root, where `/:shortCode` shadowed `/health` and broke the ALB health check; it also collided with the SPA once both were served from one CloudFront domain. Keep it under `/r` — nothing should be mounted at the application root.
   - `HealthController` serves `/health`.
   - `PrismaModule`/`PrismaService` (`src/prisma/`) is the single DB gateway injected into services.
 - **`apps/web`** — React 18 + Vite. Talks to the API via `src/api.ts`; UI is a single `App.tsx`.
-- **`packages/shared`** — Source-only workspace package (`main`/`types` point at `src/index.ts`, no build step). Exports Zod schemas (`CreateUrlSchema`) and DTO types used by both api and web. Consumers import via `@url-shortener/shared` (`workspace:*`).
+- **`packages/shared`** — Workspace package compiled with `tsc` to CommonJS (`main`/`types` point at `dist/`); `pnpm dev` runs it in watch mode. It must be built before `apps/api`, since the API's compiled output `require()`s it at runtime — `pnpm -r build` handles the ordering, and the api Dockerfile builds it explicitly. Exports Zod schemas (`CreateUrlSchema`) and DTO types used by both api and web. Consumers import via `@url-shortener/shared` (`workspace:*`).
 
 TypeScript config is centralised in `tsconfig.base.json` (ES2022, `moduleResolution: "Bundler"`, strict). Each workspace extends it.
 
@@ -71,4 +71,24 @@ Validation lives in `packages/shared` as Zod schemas. The API layers Nest's `cla
 
 ## Deployment context
 
-The README lays out an AWS target (S3+CloudFront for web, App Runner or ECS Fargate for api container, RDS Postgres, Secrets Manager for `DATABASE_URL`, GitHub Actions CI/CD). There is no Dockerfile or CI workflow committed yet — the README references `apps/api/Dockerfile` as a future artifact.
+Deployed to AWS in `us-east-1`, account `695746119332`. Live at **https://d3t588gbr3lp9p.cloudfront.net**.
+
+One CloudFront distribution (`E2LCSYNUEOV3WI`) fronts everything, so the browser sees a single origin — which is why there is no ACM certificate and why CORS is not a factor:
+
+```
+/api/*   → ALB → ECS Fargate    (CachingDisabled, AllViewer origin-request policy)
+/r/*     → ALB → ECS Fargate    (CachingDisabled — a cached 302 would stop counting clicks)
+/health  → ALB → ECS Fargate
+*        → S3 (private, OAC)    (403/404 → /index.html 200 for SPA routes)
+```
+
+- **API**: `apps/api/Dockerfile` → ECR `url-shortener-api` → ECS service `url-shortener-api-service` on cluster `url-shortener-cluster`, behind ALB `url-shortener-alb`. The ALB must have every AZ enabled that the service's subnets span, or tasks register as `Target.NotInUse`.
+- **Web**: `apps/web/dist` → S3 `url-shortener-web-695746119332` (Block Public Access on; readable only by this distribution via OAC).
+- **DB**: RDS PostgreSQL `url-shortener-db`. Fargate reaches it via security-group reference; local access depends on a "My IP" rule that goes stale often.
+- **Secrets**: still plaintext env vars on the task definition. Moving them to Secrets Manager is outstanding, as is rotating them.
+
+### CI/CD
+
+`.github/workflows/deploy-api.yml` and `deploy-web.yml` deploy on push to `main`, each filtered by path so unrelated changes don't trigger a deploy. Both authenticate via **GitHub OIDC** — assuming role `github-actions-url-shortener`, scoped to this repo's `main` branch — so there are no long-lived AWS keys in GitHub secrets.
+
+The API workflow tags images with the commit SHA, pulls the current task definition from AWS (rather than committing one, which would put secrets in git), swaps only the image, and waits for service stability. The web workflow uploads fingerprinted assets with a one-year immutable cache, then `index.html` with no-cache, then invalidates CloudFront.
