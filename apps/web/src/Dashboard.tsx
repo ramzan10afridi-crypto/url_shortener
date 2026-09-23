@@ -62,7 +62,7 @@ export function Dashboard({ user, onSignOut, onOpenAnalytics }: Props) {
   return (
     <>
       <header className="topbar">
-        <h1>URL Shortener</h1>
+        <h1>URL Shortener By Ramazan ali</h1>
         <div className="user-menu">
           <span className="muted">{user.email}</span>
           <button type="button" className="link" onClick={handleSignOut}>
